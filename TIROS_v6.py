@@ -12,6 +12,15 @@ import traceback
 import sys
 import warnings
 import ctypes
+
+# Отключение автоматического масштабирования DPI для matplotlib
+import matplotlib
+matplotlib.use('TkAgg')  # Явно указываем бэкенд
+
+# Настройка параметров matplotlib для избежания проблем с DPI
+matplotlib.rcParams['figure.dpi'] = 100
+matplotlib.rcParams['savefig.dpi'] = 100
+
 #warnings.filterwarnings('ignore')
 
 # Настройка DPI для Windows
@@ -96,23 +105,103 @@ class ToolTip:
                 pass
             self.tip_window = None
 
+class CustomToolbar(NavigationToolbar2Tk):
+    """Кастомная панель инструментов для размещения в верхней части окна"""
+    def __init__(self, canvas, parent, app):
+        self.app = app
+        super().__init__(canvas, parent)
+
+    def _init_toolbar(self):
+        # Очищаем стандартные кнопки
+        for child in self.winfo_children():
+            child.destroy()
+
+        # Создаем кнопки инструментов в горизонтальном порядке
+        buttons = [
+            ('Home', 'Домой', 'Восстановить исходный вид'),
+            ('Back', 'Назад', 'Предыдущий вид'),
+            ('Forward', 'Вперед', 'Следующий вид'),
+            (None, None, None),  # Разделитель
+            ('Pan', 'Панорамирование', 'Перемещение по графику'),
+            ('Zoom', 'Масштаб', 'Масштабирование прямоугольником'),
+            (None, None, None),  # Разделитель
+            ('Save', 'Сохранить', 'Сохранить график')
+        ]
+
+        for btn_id, text, tooltip in buttons:
+            if btn_id is None:
+                ttk.Separator(self, orient='vertical').pack(side=tk.LEFT, padx=2, fill=tk.Y)
+                continue
+
+            btn = ttk.Button(self, text=text, width=12,
+                           command=lambda x=btn_id: self._handle_tool(x))
+            btn.pack(side=tk.LEFT, padx=2)
+            ToolTip(btn, tooltip)
+
+            # Сохраняем ссылки на кнопки
+            if btn_id == 'Home':
+                self.home_btn = btn
+            elif btn_id == 'Back':
+                self.back_btn = btn
+            elif btn_id == 'Forward':
+                self.forward_btn = btn
+            elif btn_id == 'Pan':
+                self.pan_btn = btn
+            elif btn_id == 'Zoom':
+                self.zoom_btn = btn
+            elif btn_id == 'Save':
+                self.save_btn = btn
+
+        # Изначально отключаем кнопки навигации
+        self.back_btn.config(state=tk.DISABLED)
+        self.forward_btn.config(state=tk.DISABLED)
+
+    def _handle_tool(self, tool):
+        """Обработчик нажатия кнопок инструментов"""
+        if tool == 'Home':
+            self.home()
+        elif tool == 'Back':
+            self.back()
+        elif tool == 'Forward':
+            self.forward()
+        elif tool == 'Pan':
+            self.pan()
+        elif tool == 'Zoom':
+            self.zoom()
+        elif tool == 'Save':
+            self.save_figure()
+
+    def save_figure(self):
+        """Сохранение графика через приложение"""
+        if self.app:
+            self.app.save_plot()
+
+    def set_message(self, s):
+        """Переопределяем метод set_message"""
+        if hasattr(self.app, 'status_var'):
+            self.app.status_var.set(s)
+
 class GeoInterpolationApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Интерполяция геоданных с картой")
 
-        # Получаем DPI масштабирование
-        self.dpi_scale = self.get_dpi_scale()
+        # Получаем DPI масштабирование с обработкой ошибок
+        try:
+            self.dpi_scale = self.get_dpi_scale()
+        except:
+            self.dpi_scale = 1.0
 
-        # Устанавливаем размер окна с учетом DPI
-        base_width = 1600
-        base_height = 950
-        scaled_width = int(base_width * self.dpi_scale)
-        scaled_height = int(base_height * self.dpi_scale)
-        self.root.geometry(f"{scaled_width}x{scaled_height}")
+        # Устанавливаем размер окна (используем фиксированные размеры для избежания проблем)
+        base_width = 1400
+        base_height = 850
+        self.root.geometry(f"{base_width}x{base_height}")
 
         # Минимальный размер окна
-        self.root.minsize(int(1200 * self.dpi_scale), int(700 * self.dpi_scale))
+        self.root.minsize(1200, 700)
+
+        # Привязываем обработчик изменения размера окна
+        self.root.bind('<Configure>', self.on_window_resize)
 
         # Переменные
         self.file_path = tk.StringVar()
@@ -222,16 +311,47 @@ class GeoInterpolationApp:
         try:
             import ctypes
             try:
-                awareness = ctypes.c_int()
-                ctypes.windll.shcore.GetProcessDpiAwareness(0, ctypes.byref(awareness))
-                dpi = ctypes.c_uint()
-                ctypes.windll.user32.GetDpiForWindow(self.root.winfo_id(), ctypes.byref(dpi))
-                scale = dpi.value / 96.0
-                return scale
+                # Используем более безопасный способ получения DPI
+                hwnd = self.root.winfo_id()
+                # Получаем DPI с помощью GetDpiForWindow (Windows 10 и новее)
+                if hasattr(ctypes.windll.user32, 'GetDpiForWindow'):
+                    dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+                    if dpi > 0:
+                        scale = dpi / 96.0
+                        return min(max(scale, 0.5), 2.0)  # Ограничиваем масштаб
             except:
-                return 1.0
+                pass
+
+            # Альтернативный метод через winfo_fpixels
+            try:
+                dpi = self.root.winfo_fpixels('1i')
+                if dpi > 0:
+                    scale = dpi / 96.0
+                    return min(max(scale, 0.5), 2.0)
+            except:
+                pass
+
+            return 1.0
         except:
             return 1.0
+
+    def on_window_resize(self, event=None):
+        """Обработчик изменения размера окна"""
+        if hasattr(self, 'canvas') and self.canvas:
+            try:
+                # Обновляем только если окно не свернуто
+                if self.root.winfo_width() > 10 and self.root.winfo_height() > 10:
+                    self.canvas.draw_idle()
+            except Exception as e:
+                print(f"Ошибка при изменении размера: {e}")
+
+    def safe_toolbar_update(self):
+        """Безопасное обновление тулбара с обработкой ошибок"""
+        if hasattr(self, 'toolbar') and self.toolbar is not None:
+            try:
+                self.toolbar.update()
+            except Exception as e:
+                print(f"Ошибка при обновлении тулбара: {e}")
 
     def show_cartopy_warning(self):
         """Показывает предупреждение об отсутствии Cartopy"""
@@ -267,14 +387,14 @@ conda install -c conda-forge cartopy
         self.toggle_btn = ttk.Button(btn_frame,
                                      text="◀ Скрыть панель настроек",
                                      command=self.toggle_left_panel,
-                                     width=int(20 * self.dpi_scale))
+                                     width=20)
         self.toggle_btn.pack(side=tk.LEFT, padx=2)
 
         # Кнопка для показа/скрытия информации о методах
         self.info_btn = ttk.Button(btn_frame,
                                    text="ℹ О методах",
                                    command=self.toggle_method_info,
-                                   width=int(15 * self.dpi_scale))
+                                   width=15)
         self.info_btn.pack(side=tk.LEFT, padx=2)
 
         # Разделитель
@@ -292,21 +412,21 @@ conda install -c conda-forge cartopy
 
             self.map_type_combo = ttk.Combobox(btn_frame, textvariable=self.map_type,
                                                values=["detailed", "physical", "political", "relief", "satellite"],
-                                               state="readonly", width=int(14 * self.dpi_scale))
+                                               state="readonly", width=14)
             self.map_type_combo.pack(side=tk.LEFT, padx=2)
             self.map_type_combo.bind('<<ComboboxSelected>>', self.on_map_type_change)
             ToolTip(self.map_type_combo, "Тип картографической подложки")
 
             self.map_res_combo = ttk.Combobox(btn_frame, textvariable=self.map_resolution,
                                               values=["110m", "50m", "10m"],
-                                              state="readonly", width=int(8 * self.dpi_scale))
+                                              state="readonly", width=8)
             self.map_res_combo.pack(side=tk.LEFT, padx=2)
             self.map_res_combo.bind('<<ComboboxSelected>>', self.on_map_resolution_change)
             ToolTip(self.map_res_combo, "Разрешение карты (10m - максимальное)")
 
             extent_btn = ttk.Button(btn_frame, text="🎯 По данным",
                                    command=self.set_map_extent_from_data,
-                                   width=int(12 * self.dpi_scale))
+                                   width=12)
             extent_btn.pack(side=tk.LEFT, padx=2)
             ToolTip(extent_btn, "Установить границы карты по данным")
 
@@ -314,7 +434,7 @@ conda install -c conda-forge cartopy
         self.map_alpha_scale = ttk.Scale(btn_frame, from_=0.0, to=1.0,
                                          variable=self.map_alpha, orient=tk.HORIZONTAL,
                                          command=self.on_alpha_change,
-                                         length=int(80 * self.dpi_scale))
+                                         length=80)
         self.map_alpha_scale.pack(side=tk.LEFT, padx=2)
         self.map_alpha_label = ttk.Label(btn_frame, text="0.3", width=4)
         self.map_alpha_label.pack(side=tk.LEFT, padx=2)
@@ -323,14 +443,14 @@ conda install -c conda-forge cartopy
         self.interp_alpha_scale = ttk.Scale(btn_frame, from_=0.0, to=1.0,
                                            variable=self.interp_alpha, orient=tk.HORIZONTAL,
                                            command=self.on_interp_alpha_change,
-                                           length=int(80 * self.dpi_scale))
+                                           length=80)
         self.interp_alpha_scale.pack(side=tk.LEFT, padx=2)
         self.interp_alpha_label = ttk.Label(btn_frame, text="0.7", width=4)
         self.interp_alpha_label.pack(side=tk.LEFT, padx=2)
 
         self.exit_btn = ttk.Button(btn_frame, text="✕ Выход",
                                   command=self.exit_program,
-                                  width=int(10 * self.dpi_scale))
+                                  width=10)
         self.exit_btn.pack(side=tk.RIGHT, padx=2)
         ToolTip(self.exit_btn, "Завершить работу программы")
 
@@ -339,7 +459,7 @@ conda install -c conda-forge cartopy
         content_frame.pack(fill=tk.BOTH, expand=True)
 
         # Левая панель с прокруткой (настройки)
-        self.left_canvas = tk.Canvas(content_frame, width=int(450 * self.dpi_scale),
+        self.left_canvas = tk.Canvas(content_frame, width=450,
                                     highlightthickness=0)
         self.left_canvas.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
 
@@ -351,16 +471,16 @@ conda install -c conda-forge cartopy
         self.left_canvas.bind('<Configure>', lambda e: self.left_canvas.configure(
             scrollregion=self.left_canvas.bbox("all")))
 
-        self.left_panel = ttk.Frame(self.left_canvas, width=int(430 * self.dpi_scale))
+        self.left_panel = ttk.Frame(self.left_canvas, width=430)
         self.left_canvas.create_window((0, 0), window=self.left_panel, anchor="nw",
-                                      width=int(430 * self.dpi_scale))
+                                      width=430)
 
         def on_mousewheel(event):
             self.left_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
         self.left_canvas.bind_all("<MouseWheel>", on_mousewheel)
 
-        self.info_panel = ttk.Frame(content_frame, width=int(400 * self.dpi_scale))
+        self.info_panel = ttk.Frame(content_frame, width=400)
         self.info_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         self.info_panel.pack_forget()
 
@@ -380,7 +500,7 @@ conda install -c conda-forge cartopy
                                 font=('Arial', 12, 'bold'))
         title_label.pack(pady=(0, 10), padx=5)
 
-        info_canvas = tk.Canvas(self.info_panel, width=int(380 * self.dpi_scale),
+        info_canvas = tk.Canvas(self.info_panel, width=380,
                                highlightthickness=0)
         info_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -392,9 +512,9 @@ conda install -c conda-forge cartopy
         info_canvas.bind('<Configure>', lambda e: info_canvas.configure(
             scrollregion=info_canvas.bbox("all")))
 
-        info_frame = ttk.Frame(info_canvas, width=int(360 * self.dpi_scale))
+        info_frame = ttk.Frame(info_canvas, width=360)
         info_canvas.create_window((0, 0), window=info_frame, anchor="nw",
-                                 width=int(360 * self.dpi_scale))
+                                 width=360)
 
         methods_order = ["IDW", "B-сплайн", "TIN", "Барнс (Barnes)", "Крессман (Cressman)"]
 
@@ -408,7 +528,7 @@ conda install -c conda-forge cartopy
                      font=('Arial', 9, 'italic'), foreground='blue').pack(anchor=tk.W, pady=(0, 5))
 
             ttk.Label(method_frame, text=desc['description'],
-                     wraplength=int(330 * self.dpi_scale), justify=tk.LEFT).pack(anchor=tk.W, pady=2)
+                     wraplength=330, justify=tk.LEFT).pack(anchor=tk.W, pady=2)
 
             ttk.Label(method_frame, text=f"📊 Применение: {desc['example']}",
                      font=('Arial', 9), foreground='green').pack(anchor=tk.W, pady=2)
@@ -418,14 +538,14 @@ conda install -c conda-forge cartopy
             ttk.Label(adv_frame, text="✅ Преимущества:",
                      font=('Arial', 9, 'bold')).pack(anchor=tk.W)
             ttk.Label(adv_frame, text=desc['advantages'],
-                     wraplength=int(320 * self.dpi_scale), justify=tk.LEFT).pack(anchor=tk.W, padx=(10, 0))
+                     wraplength=320, justify=tk.LEFT).pack(anchor=tk.W, padx=(10, 0))
 
             disadv_frame = ttk.Frame(method_frame)
             disadv_frame.pack(fill=tk.X, pady=2)
             ttk.Label(disadv_frame, text="⚠️ Недостатки:",
                      font=('Arial', 9, 'bold')).pack(anchor=tk.W)
             ttk.Label(disadv_frame, text=desc['disadvantages'],
-                     wraplength=int(320 * self.dpi_scale), justify=tk.LEFT).pack(anchor=tk.W, padx=(10, 0))
+                     wraplength=320, justify=tk.LEFT).pack(anchor=tk.W, padx=(10, 0))
 
             ttk.Separator(method_frame, orient='horizontal').pack(fill=tk.X, pady=5)
 
@@ -438,7 +558,7 @@ conda install -c conda-forge cartopy
 • Барнс: метеорологические поля, температура, давление
 • Крессман: анализ ветра, осадков, редкая сеть станций"""
 
-        ttk.Label(tips_frame, text=tips_text, wraplength=int(330 * self.dpi_scale),
+        ttk.Label(tips_frame, text=tips_text, wraplength=330,
                  justify=tk.LEFT).pack(pady=5)
 
         ttk.Label(info_frame, text="").pack(pady=10)
@@ -456,7 +576,7 @@ conda install -c conda-forge cartopy
         ToolTip(file_frame.winfo_children()[-1], "Выберите CSV или TXT файл с данными")
 
         ttk.Entry(file_frame, textvariable=self.file_path,
-                 width=int(50 * self.dpi_scale)).pack(fill=tk.X, pady=2)
+                 width=50).pack(fill=tk.X, pady=2)
         ToolTip(file_frame.winfo_children()[-1], "Путь к выбранному файлу")
 
         ttk.Button(file_frame, text="Загрузить", command=self.load_file).pack(fill=tk.X, pady=2)
@@ -467,7 +587,7 @@ conda install -c conda-forge cartopy
 
         ttk.Label(params_frame, text="Параметр:").pack(anchor=tk.W, pady=(5, 2))
         self.param_combo = ttk.Combobox(params_frame, textvariable=self.selected_param,
-                                       state="readonly", width=int(48 * self.dpi_scale))
+                                       state="readonly", width=48)
         self.param_combo.pack(fill=tk.X, pady=(0, 5))
         self.param_combo.bind('<<ComboboxSelected>>', self.on_param_selected)
         ToolTip(self.param_combo, "Выберите числовой параметр для интерполяции")
@@ -481,19 +601,19 @@ conda install -c conda-forge cartopy
                   "Барнс (Barnes)", "Крессман (Cressman)"]
         method_combo = ttk.Combobox(method_select_frame, textvariable=self.selected_method,
                                    values=methods, state="readonly",
-                                   width=int(40 * self.dpi_scale))
+                                   width=40)
         method_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
         method_combo.bind('<<ComboboxSelected>>', self.on_method_selected)
         ToolTip(method_combo, "Выберите метод интерполяции")
 
-        info_btn = ttk.Button(method_select_frame, text="?", width=int(3 * self.dpi_scale),
+        info_btn = ttk.Button(method_select_frame, text="?", width=3,
                              command=self.show_current_method_info)
         info_btn.pack(side=tk.RIGHT, padx=(5, 0))
         ToolTip(info_btn, "Показать информацию о выбранном методе")
 
         ttk.Label(params_frame, text="Размер сетки (NxN):").pack(anchor=tk.W, pady=(5, 2))
         grid_entry = ttk.Entry(params_frame, textvariable=self.grid_resolution,
-                              width=int(48 * self.dpi_scale))
+                              width=48)
         grid_entry.pack(fill=tk.X, pady=(0, 5))
         ToolTip(grid_entry, "Количество точек сетки (чем больше, тем детальнее, но медленнее)")
 
@@ -559,7 +679,7 @@ conda install -c conda-forge cartopy
         barnes_passes_frame.pack(fill=tk.X)
         barnes_scale = ttk.Scale(barnes_passes_frame, from_=1, to=10, variable=self.barnes_passes,
                  orient=tk.HORIZONTAL, command=self.on_barnes_passes_change,
-                 length=int(200 * self.dpi_scale))
+                 length=200)
         barnes_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ToolTip(barnes_scale, "Количество итераций уточнения поля (больше = точнее, но медленнее)")
         self.barnes_passes_label = ttk.Label(barnes_passes_frame, text="3", width=5)
@@ -570,7 +690,7 @@ conda install -c conda-forge cartopy
         gamma_frame.pack(fill=tk.X)
         gamma_scale = ttk.Scale(gamma_frame, from_=0.1, to=1.0, variable=self.barnes_gamma,
                  orient=tk.HORIZONTAL, command=self.on_barnes_gamma_change,
-                 length=int(200 * self.dpi_scale))
+                 length=200)
         gamma_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ToolTip(gamma_scale, "γ > 0.5 - более гладкое поле, γ < 0.5 - ближе к данным")
         self.barnes_gamma_label = ttk.Label(gamma_frame, text="0.5", width=5)
@@ -586,7 +706,7 @@ conda install -c conda-forge cartopy
         radius_frame.pack(fill=tk.X)
         radius_scale = ttk.Scale(radius_frame, from_=10, to=500, variable=self.cressman_radius,
                  orient=tk.HORIZONTAL, command=self.on_cressman_radius_change,
-                 length=int(200 * self.dpi_scale))
+                 length=200)
         radius_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ToolTip(radius_scale, "Радиус влияния на первом проходе (должен быть больше max расстояния между станциями)")
         self.cressman_radius_label = ttk.Label(radius_frame, text="100.0", width=5)
@@ -597,7 +717,7 @@ conda install -c conda-forge cartopy
         passes_frame.pack(fill=tk.X)
         passes_scale = ttk.Scale(passes_frame, from_=1, to=5, variable=self.cressman_passes,
                  orient=tk.HORIZONTAL, command=self.on_cressman_passes_change,
-                 length=int(200 * self.dpi_scale))
+                 length=200)
         passes_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ToolTip(passes_scale, "Количество итераций с уменьшающимся радиусом")
         self.cressman_passes_label = ttk.Label(passes_frame, text="3", width=5)
@@ -608,7 +728,7 @@ conda install -c conda-forge cartopy
         factor_frame.pack(fill=tk.X)
         factor_scale = ttk.Scale(factor_frame, from_=0.3, to=0.9, variable=self.cressman_radius_factor,
                  orient=tk.HORIZONTAL, command=self.on_cressman_factor_change,
-                 length=int(200 * self.dpi_scale))
+                 length=200)
         factor_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ToolTip(factor_scale, "Множитель уменьшения радиуса на каждом проходе (0.7 = уменьшение на 30%)")
         self.cressman_factor_label = ttk.Label(factor_frame, text="0.7", width=5)
@@ -652,14 +772,14 @@ conda install -c conda-forge cartopy
 
         self.palette_combo = ttk.Combobox(palette_frame, textvariable=self.color_palette,
                                          values=palettes, state="readonly",
-                                         width=int(40 * self.dpi_scale))
+                                         width=40)
         self.palette_combo.pack(fill=tk.X, pady=(0, 2))
         self.palette_combo.bind('<<ComboboxSelected>>', self.on_palette_change)
         ToolTip(self.palette_combo, "Выберите цветовую схему для интерполяции")
 
         palette_preview_btn = ttk.Button(palette_frame, text="Показать примеры",
                                         command=self.show_palette_preview,
-                                        width=int(20 * self.dpi_scale))
+                                        width=20)
         palette_preview_btn.pack(pady=(2, 0))
         ToolTip(palette_preview_btn, "Показать все доступные цветовые палитры")
 
@@ -677,11 +797,11 @@ conda install -c conda-forge cartopy
         ttk.Label(colors_frame, text="Количество цветов:").pack(side=tk.LEFT, padx=(0, 5))
         colors_scale = ttk.Scale(colors_frame, from_=5, to=50, variable=self.n_colors,
                                 orient=tk.HORIZONTAL, command=self.on_n_colors_change,
-                                length=int(150 * self.dpi_scale))
+                                length=150)
         colors_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.n_colors_label = ttk.Label(colors_frame, text="20", width=4)
         self.n_colors_label.pack(side=tk.RIGHT, padx=(5, 0))
-        ToolTip(colors_scale, "Количество цветовых уровней (больше = более плавный переход)")
+        ToolTip(colors_scale, "Количество цветовых уровней (больше = более плавный переход")
 
         # Настройки изолиний
         contours_frame = ttk.Frame(display_frame)
@@ -689,38 +809,38 @@ conda install -c conda-forge cartopy
 
         min_frame = ttk.Frame(contours_frame)
         min_frame.pack(fill=tk.X, pady=1)
-        ttk.Label(min_frame, text="Мин:", width=int(5 * self.dpi_scale)).pack(side=tk.LEFT)
+        ttk.Label(min_frame, text="Мин:", width=5).pack(side=tk.LEFT)
         min_entry = ttk.Entry(min_frame, textvariable=self.contour_min,
-                             width=int(15 * self.dpi_scale))
+                             width=15)
         min_entry.pack(side=tk.LEFT, padx=(0, 5))
         ToolTip(min_entry, "Минимальное значение для изолиний")
 
         max_frame = ttk.Frame(contours_frame)
         max_frame.pack(fill=tk.X, pady=1)
-        ttk.Label(max_frame, text="Макс:", width=int(5 * self.dpi_scale)).pack(side=tk.LEFT)
+        ttk.Label(max_frame, text="Макс:", width=5).pack(side=tk.LEFT)
         max_entry = ttk.Entry(max_frame, textvariable=self.contour_max,
-                             width=int(15 * self.dpi_scale))
+                             width=15)
         max_entry.pack(side=tk.LEFT, padx=(0, 5))
         ToolTip(max_entry, "Максимальное значение для изолиний")
 
         step_frame = ttk.Frame(contours_frame)
         step_frame.pack(fill=tk.X, pady=1)
-        ttk.Label(step_frame, text="Шаг:", width=int(5 * self.dpi_scale)).pack(side=tk.LEFT)
+        ttk.Label(step_frame, text="Шаг:", width=5).pack(side=tk.LEFT)
         step_entry = ttk.Entry(step_frame, textvariable=self.contour_step,
-                              width=int(15 * self.dpi_scale))
+                              width=15)
         step_entry.pack(side=tk.LEFT, padx=(0, 5))
         ToolTip(step_entry, "Шаг между изолиниями")
 
         levels_frame = ttk.Frame(contours_frame)
         levels_frame.pack(fill=tk.X, pady=1)
-        ttk.Label(levels_frame, text="Уровней:", width=int(5 * self.dpi_scale)).pack(side=tk.LEFT)
+        ttk.Label(levels_frame, text="Уровней:", width=5).pack(side=tk.LEFT)
         levels_entry = ttk.Entry(levels_frame, textvariable=self.contour_levels,
-                                width=int(15 * self.dpi_scale))
+                                width=15)
         levels_entry.pack(side=tk.LEFT, padx=(0, 5))
         ToolTip(levels_entry, "Количество уровней (если не заданы мин/макс/шаг)")
 
         auto_btn = ttk.Button(contours_frame, text="Авто", command=self.auto_contour_settings,
-                             width=int(10 * self.dpi_scale))
+                             width=10)
         auto_btn.pack(fill=tk.X, pady=5)
         ToolTip(auto_btn, "Автоматически установить параметры изолиний по данным")
 
@@ -750,30 +870,35 @@ conda install -c conda-forge cartopy
 
         self.status_var = tk.StringVar(value="Готов к работе")
         status_label = ttk.Label(status_frame, textvariable=self.status_var,
-                                wraplength=int(410 * self.dpi_scale), justify=tk.LEFT)
+                                wraplength=410, justify=tk.LEFT)
         status_label.pack(fill=tk.X)
 
         ttk.Label(self.left_panel, text="").pack(pady=10)
 
     def create_right_panel_content(self):
         """Создает содержимое правой панели с графиком и инструментами"""
+        # Верхняя панель с инструментами графика
+        top_toolbar_frame = ttk.Frame(self.right_panel)
+        top_toolbar_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 5))
+
+        # Добавляем метку
+        ttk.Label(top_toolbar_frame, text="🔧 Инструменты графика:",
+                 font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        # Фрейм для графика
         plot_frame = ttk.LabelFrame(self.right_panel, text="🗺️ Результат интерполяции", padding=5)
         plot_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.figure = plt.Figure(figsize=(12 * self.dpi_scale, 9 * self.dpi_scale),
-                                 dpi=int(150 * self.dpi_scale))
+        # Используем безопасное значение DPI
+        safe_dpi = 100
+
+        self.figure = plt.Figure(figsize=(12, 9), dpi=safe_dpi)
         self.canvas = FigureCanvasTkAgg(self.figure, master=plot_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        toolbar_frame = ttk.Frame(plot_frame)
-        toolbar_frame.pack(fill=tk.X, pady=(5, 0))
-
-        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-        self.toolbar.update()
-
-        ttk.Label(toolbar_frame,
-                 text="🔍 Инструменты: панорамирование, масштабирование, сохранение, домой",
-                 font=('Arial', 8), foreground='gray').pack(side=tk.LEFT, padx=5)
+        # Создаем кастомную панель инструментов и размещаем её в верхней панели
+        self.toolbar = CustomToolbar(self.canvas, top_toolbar_frame, self)
+        self.toolbar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
 
         self.last_results = None
 
@@ -1120,18 +1245,34 @@ conda install -c conda-forge cartopy
             return np.linspace(np.nanmin(zi), np.nanmax(zi), 10)
 
     def update_plot(self):
+        """Обновляет график с безопасной обработкой ошибок"""
         if self.last_results is not None:
-            self.plot_results(
-                self.last_results['xi'],
-                self.last_results['yi'],
-                self.last_results['zi'],
-                self.last_results['x'],
-                self.last_results['y'],
-                self.last_results['z'],
-                self.last_results['names'],
-                self.last_results.get('x_label', "Долгота"),
-                self.last_results.get('y_label', "Широта")
-            )
+            try:
+                self.plot_results(
+                    self.last_results['xi'],
+                    self.last_results['yi'],
+                    self.last_results['zi'],
+                    self.last_results['x'],
+                    self.last_results['y'],
+                    self.last_results['z'],
+                    self.last_results['names'],
+                    self.last_results.get('x_label', "Долгота"),
+                    self.last_results.get('y_label', "Широта")
+                )
+                # Безопасно обновляем тулбар
+                self.safe_toolbar_update()
+            except ZeroDivisionError as e:
+                print(f"Ошибка деления на ноль при обновлении графика: {e}")
+                self.status_var.set("Ошибка отображения - попробуйте изменить размер окна")
+                # Попытка восстановления
+                try:
+                    self.figure.set_dpi(100)
+                    self.canvas.draw()
+                except:
+                    pass
+            except Exception as e:
+                print(f"Ошибка при обновлении графика: {e}")
+                self.status_var.set(f"Ошибка обновления: {str(e)[:50]}")
 
     def create_grid(self, x, y):
         try:
@@ -1416,10 +1557,26 @@ conda install -c conda-forge cartopy
 
     def plot_results(self, xi, yi, zi, x, y, z, names=None, x_label="Долгота", y_label="Широта"):
         """Отображает результаты интерполяции с улучшенной картой"""
-        self.figure.clear()
 
-        # Увеличиваем DPI для более четкого отображения
-        self.figure.set_dpi(150)
+        # Обработка возможных проблем с DPI
+        try:
+            self.figure.clear()
+            # Безопасное установление DPI
+            current_dpi = getattr(self.figure, 'dpi', 100)
+            if current_dpi <= 0:
+                self.figure.set_dpi(100)
+            else:
+                self.figure.set_dpi(min(max(current_dpi, 100), 150))
+        except Exception as e:
+            print(f"Ошибка при очистке фигуры: {e}")
+            # Создаем новую фигуру при ошибке
+            self.figure = plt.Figure(figsize=(12, 9), dpi=100)
+            # Находим фрейм для графика
+            for child in self.right_panel.winfo_children():
+                if isinstance(child, ttk.LabelFrame) and "Результат интерполяции" in child.cget("text"):
+                    self.canvas = FigureCanvasTkAgg(self.figure, master=child)
+                    self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                    break
 
         if self.show_map.get() and CARTOPY_AVAILABLE:
             # Используем проекцию PlateCarree для базовой карты
@@ -1599,11 +1756,6 @@ conda install -c conda-forge cartopy
 
         title = ' | '.join(title_parts)
         ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
-
-        # Легенда
-        #ax.scatter([], [], c='gray', s=80, edgecolors='white', linewidth=2,
-                  #label='Исходные точки', alpha=0.8)
-        #ax.legend(loc='upper right', fontsize=9, framealpha=0.9)
 
         # Компактное размещение
         self.figure.tight_layout()
