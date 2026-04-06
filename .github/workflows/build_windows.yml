@@ -1,187 +1,38 @@
-name: Build Windows Executable
+---
+name: "Build Windows Executable"
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller
-        pip install -r requirements.txt
-    
-    - name: Build with PyInstaller
-      run: |
-        pyinstaller --onefile --windowed --name "GeoInterpolationApp" `
-          --icon="icon.ico" `
-          --version-file="version.txt" `
-          --hidden-import=pandas `
-          --hidden-import=numpy `
-          --hidden-import=scipy `
-          --hidden-import=matplotlib `
-          --hidden-import=cartopy `
-          --hidden-import=tkinter `
-          --hidden-import=PIL `
-          --collect-all cartopy `
-          TIROS_v6.py
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: GeoInterpolationApp-Windows
-        path: dist/GeoInterpolationApp.exename: Build Windows Executable
+      - name: Checkout
+        uses: actions/checkout@v4
 
-on:
-  # Запуск при push в main ветку
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'TIROS_v6.py'
-      - 'requirements.txt'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-  # Запуск при создании тега (релиз)
-  push:
-    tags:
-      - 'v*'
+      - name: Install deps
+        run: |
+          pip install pyinstaller numpy pandas scipy matplotlib pillow
 
-  # Ручной запуск из интерфейса GitHub
-  workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Тип сборки'
-        required: true
-        default: 'standalone'
-        type: choice
-        options:
-          - standalone
-          - console-debug
+      - name: Build exe
+        run: |
+          pyinstaller --onefile --windowed --name=GeoInterpolationApp ^
+            --icon=icon.ico --version-file=version.txt ^
+            --hidden-import=pandas --hidden-import=numpy ^
+            --hidden-import=scipy --hidden-import=matplotlib ^
+            --hidden-import=tkinter --hidden-import=PIL ^
+            --exclude-module=cartopy TIROS_v6.py
 
-jobs:
-  build:
-    runs-on: windows-latest
-
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11']
-
-    steps:
-    # 1. Клонирование репозитория
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    # 2. Настройка Python
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-
-    # 3. Установка зависимостей
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller
-        pip install -r requirements.txt
-
-    # 4. Дополнительные проверки
-    - name: Verify imports
-      run: |
-        python -c "import pandas; print('Pandas OK')"
-        python -c "import numpy; print('NumPy OK')"
-        python -c "import scipy; print('SciPy OK')"
-        python -c "import matplotlib; print('Matplotlib OK')"
-        python -c "import cartopy; print('Cartopy OK')"
-
-    # 5. Сборка с PyInstaller (основная)
-    - name: Build with PyInstaller
-      run: |
-        pyinstaller --onefile `
-          --windowed `
-          --name "GeoInterpolationApp" `
-          --icon "icon.ico" `
-          --version-file "version.txt" `
-          --add-data "TIROS_v6.py;." `
-          --hidden-import=pandas `
-          --hidden-import=numpy `
-          --hidden-import=scipy `
-          --hidden-import=matplotlib `
-          --hidden-import=cartopy `
-          --hidden-import=tkinter `
-          --hidden-import=PIL `
-          --collect-all cartopy `
-          --collect-all matplotlib `
-          --collect-all pandas `
-          --exclude-module=tests `
-          --exclude-module=unittest `
-          --clean `
-          TIROS_v6.py
-
-    # 6. Сборка с консолью для отладки (опционально)
-    - name: Build debug version with console
-      if: github.event.inputs.build_type == 'console-debug'
-      run: |
-        pyinstaller --onefile `
-          --console `
-          --name "GeoInterpolationApp_Debug" `
-          --add-data "TIROS_v6.py;." `
-          --hidden-import=pandas `
-          --hidden-import=numpy `
-          --hidden-import=scipy `
-          --hidden-import=matplotlib `
-          --hidden-import=cartopy `
-          --collect-all cartopy `
-          --clean `
-          TIROS_v6.py
-
-    # 7. Сжатие UPX (если установлен)
-    - name: Compress with UPX (optional)
-      run: |
-        # Скачивание UPX
-        Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile "upx.zip"
-        Expand-Archive -Path "upx.zip" -DestinationPath "."
-        $upxPath = (Get-ChildItem -Path "." -Filter "upx.exe" -Recurse).FullName
-
-        # Сжатие exe файла
-        & $upxPath --best --compress-resources=0 "dist\GeoInterpolationApp.exe"
-
-    # 8. Создание архива с файлом
-    - name: Create archive
-      run: |
-        Compress-Archive -Path "dist\GeoInterpolationApp.exe" -DestinationPath "GeoInterpolationApp-${{ matrix.python-version }}.zip"
-
-    # 9. Загрузка артефактов
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: GeoInterpolationApp-Windows-Python${{ matrix.python-version }}
-        path: |
-          dist\GeoInterpolationApp.exe
-          GeoInterpolationApp-${{ matrix.python-version }}.zip
-        retention-days: 30
-
-    # 10. Создание релиза (если есть тег)
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          dist/GeoInterpolationApp.exe
-          GeoInterpolationApp-${{ matrix.python-version }}.zip
-        draft: false
-        prerelease: false
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: "GeoInterpolationApp-Windows"
+          path: "dist/GeoInterpolationApp.exe"
