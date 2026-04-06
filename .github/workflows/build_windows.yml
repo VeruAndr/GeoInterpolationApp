@@ -18,7 +18,7 @@ jobs:
       run: |
         pip install pyinstaller numpy pandas scipy matplotlib pillow
     - name: Build executable
-      run: pyinstaller --onefile --windowed --name=GeoInterpolationApp --icon=icon.ico --version-file=version.txt --hidden-import=pandas --hidden-import=numpy --hidden-import=scipy --hidden-import=matplotlib --hidden-import=tkinter --hidden-import=PIL --exclude-module=cartopy TIROS_v6.py
+      run: pyinstaller --onefile --windowed --name=GeoInterpolationApp --icon=icon.ico --hidden-import=pandas --hidden-import=numpy --hidden-import=scipy --hidden-import=matplotlib --hidden-import=tkinter --hidden-import=PIL --exclude-module=cartopy TIROS_v6.py
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
