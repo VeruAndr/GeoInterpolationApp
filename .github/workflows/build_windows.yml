@@ -1,5 +1,4 @@
----
-name: "Build Windows Executable"
+name: Build Windows Executable
 
 on:
   push:
@@ -10,29 +9,18 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install deps
-        run: |
-          pip install pyinstaller numpy pandas scipy matplotlib pillow
-
-      - name: Build exe
-        run: |
-          pyinstaller --onefile --windowed --name=GeoInterpolationApp ^
-            --icon=icon.ico --version-file=version.txt ^
-            --hidden-import=pandas --hidden-import=numpy ^
-            --hidden-import=scipy --hidden-import=matplotlib ^
-            --hidden-import=tkinter --hidden-import=PIL ^
-            --exclude-module=cartopy TIROS_v6.py
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: "GeoInterpolationApp-Windows"
-          path: "dist/GeoInterpolationApp.exe"
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |
+        pip install pyinstaller numpy pandas scipy matplotlib pillow
+    - name: Build executable
+      run: pyinstaller --onefile --windowed --name=GeoInterpolationApp --icon=icon.ico --version-file=version.txt --hidden-import=pandas --hidden-import=numpy --hidden-import=scipy --hidden-import=matplotlib --hidden-import=tkinter --hidden-import=PIL --exclude-module=cartopy TIROS_v6.py
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: GeoInterpolationApp-Windows
+        path: dist/GeoInterpolationApp.exe
